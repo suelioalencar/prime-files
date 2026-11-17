@@ -130,6 +130,39 @@ pub fn is_running() -> bool {
     send(json!({ "cmd": "ping" })).is_some()
 }
 
+/// The explorer window of the running instance and the folder of each of its
+/// tabs, the active tab first, for programs that jump a file dialog to a
+/// folder already open here (QuickSwitch). Places that are no folder on disk
+/// (This PC, the Recycle Bin: shell addresses) are left out, since a file
+/// dialog cannot be pointed at them. `None` when no instance answers.
+pub fn request_tabs() -> Option<(i64, Vec<String>)> {
+    let hwnd = read_endpoint()?.hwnd;
+    let reply = send(json!({ "cmd": "tabs" }))?;
+    Some((hwnd, folders_active_first(&reply)?))
+}
+
+/// The folders of a `tabs` reply, the active tab first and the others in tab
+/// order; `None` when the reply is not a successful one.
+fn folders_active_first(reply: &Value) -> Option<Vec<String>> {
+    if reply["ok"] != true {
+        return None;
+    }
+    let (mut active, mut others) = (Vec::new(), Vec::new());
+    for tab in reply["tabs"].as_array()? {
+        let Some(folder) = tab["folder"].as_str() else { continue };
+        if folder.starts_with("::{") {
+            continue;
+        }
+        if tab["active"] == true {
+            active.push(folder.to_string());
+        } else {
+            others.push(folder.to_string());
+        }
+    }
+    active.extend(others);
+    Some(active)
+}
+
 /// Splits a path into the folder to show and the entry to select in it.
 pub fn folder_and_selection(path: &Path) -> Option<(String, Option<String>)> {
     if let Some(address) = shell_address(path) {
@@ -454,6 +487,21 @@ mod tests {
         assert!(select.is_none());
         assert!(!folder.is_empty());
         assert!(folder_and_selection(&dir.path().join("missing")).is_none());
+    }
+
+    #[test]
+    fn tabs_list_the_active_folder_first_and_skip_shell_places() {
+        let reply = json!({ "ok": true, "tabs": [
+            { "tab": 1, "folder": r"C:\a", "active": false },
+            { "tab": 2, "folder": "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "active": false },
+            { "tab": 3, "folder": r"D:\b", "active": true },
+            { "tab": 4, "folder": r"E:\c", "active": false },
+        ] });
+        assert_eq!(
+            folders_active_first(&reply),
+            Some(vec![r"D:\b".to_string(), r"C:\a".to_string(), r"E:\c".to_string()])
+        );
+        assert_eq!(folders_active_first(&json!({ "ok": false })), None);
     }
 
     #[test]

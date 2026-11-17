@@ -26,7 +26,7 @@ use semver::Version;
 use sha2::{Digest, Sha256};
 
 /// Where releases are published.
-pub const REPOSITORY: &str = "CakeDev4k/prime-files";
+pub const REPOSITORY: &str = "suelioalencar/prime-files";
 const INSTALLER_PREFIX: &str = "PrimeFiles-Setup-";
 const SUMS_NAME: &str = "SHA256SUMS.txt";
 

@@ -62,6 +62,11 @@ pub enum Command {
     /// uninstaller, which cannot edit Listary's JSON itself.
     #[command(hide = true)]
     ForgetListary,
+    /// Prints the explorer window of the running instance and the folder of
+    /// each tab, for programs that point a file dialog at a folder already
+    /// open here (QuickSwitch). Opens no window.
+    #[command(hide = true)]
+    Tabs,
 }
 
 #[derive(Subcommand, Debug)]
@@ -96,6 +101,23 @@ impl Cli {
             over.theme_accent = Some(accent.clone());
         }
         over
+    }
+}
+
+/// Run `tabs`. The first line is the handle of the explorer window (decimal),
+/// so a caller can tell it from the launcher, which belongs to the same
+/// process; then one folder per line, the active tab first. Exits 1, printing
+/// nothing, when no instance answers.
+pub fn run_tabs_command() -> i32 {
+    match prime_files_pages::ipc::request_tabs() {
+        Some((hwnd, folders)) => {
+            println!("{hwnd}");
+            for folder in folders {
+                println!("{folder}");
+            }
+            0
+        }
+        None => 1,
     }
 }
 

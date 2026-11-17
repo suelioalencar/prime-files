@@ -43,6 +43,12 @@ fn main() {
         std::process::exit(cli::run_config_command(action, &cli));
     }
 
+    // Headless like `config`: asks the running instance and prints, so no
+    // logging set-up and no window.
+    if let Some(cli::Command::Tabs) = &cli.command {
+        std::process::exit(cli::run_tabs_command());
+    }
+
     if let Some(cli::Command::ForgetListary) = &cli.command {
         prime_files_core::telemetry::logging::init_logging();
         let code = match prime_files_pages::listary::disable() {
