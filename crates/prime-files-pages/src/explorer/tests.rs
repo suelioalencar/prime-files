@@ -3375,6 +3375,7 @@ async fn every_sidebar_style_draws_and_the_tree_follows_the_folder(cx: &mut Test
     let places = Places {
         quick_access: vec![folder(&dir.path().join("Projetos"))],
         favorites: Vec::new(),
+        files: Vec::new(),
         this_pc: None,
         drives: vec![drive.clone()],
         devices: Vec::new(),

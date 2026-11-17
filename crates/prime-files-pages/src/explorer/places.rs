@@ -36,6 +36,10 @@ pub struct Places {
     /// among the Quick access folders; they get a group of their own
     /// (issue #24).
     pub favorites: Vec<Place>,
+    /// The loose files Quick access lists on its own (the ones opened often
+    /// or lately, not pinned). They get a collapsible group of their own,
+    /// "Arquivos", so they do not bury the folders.
+    pub files: Vec<Place>,
     /// This PC itself, for its localized name.
     pub this_pc: Option<Place>,
     pub drives: Vec<Place>,
@@ -82,6 +86,7 @@ pub fn load() -> Places {
                 .quick_access
                 .iter()
                 .chain(&places.favorites)
+                .chain(&places.files)
                 .filter(|place| place.pinned)
                 .filter_map(|place| place.path.as_deref())
                 .map(str::to_lowercase)
@@ -683,12 +688,14 @@ mod platform {
             tracing::debug!("CoInitializeEx: {error}");
         }
         // A pinned file is a favorite: Quick access itself pins only folders.
-        let (favorites, quick_access): (Vec<Place>, Vec<Place>) = children(QUICK_ACCESS)
+        // The other files it lists (opened often or lately) are the loose
+        // files, kept apart from the folders.
+        let is_file = |place: &Place| place.path.as_deref().is_some_and(|path| std::path::Path::new(path).is_file());
+        let (favorites, rest): (Vec<Place>, Vec<Place>) = children(QUICK_ACCESS)
             .into_iter()
             .filter_map(|item| place(&item))
-            .partition(|place| {
-                place.pinned && place.path.as_deref().is_some_and(|path| std::path::Path::new(path).is_file())
-            });
+            .partition(|place| place.pinned && is_file(place));
+        let (files, quick_access): (Vec<Place>, Vec<Place>) = rest.into_iter().partition(|place| is_file(place));
         // This PC also lists the user folders and portable devices; the
         // drives are the ones whose path is a root, the devices the ones
         // with no path at all.
@@ -713,6 +720,7 @@ mod platform {
         Places {
             quick_access,
             favorites,
+            files,
             this_pc: item(THIS_PC).and_then(|item| place(&item)),
             drives,
             devices,

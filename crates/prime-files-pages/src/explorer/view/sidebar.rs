@@ -208,7 +208,10 @@ fn render_section(
     };
     match section {
         SidebarSection::QuickAccess => {
-            links(page, list, "quick-access", t!("Acesso rápido"), false, &places.quick_access, first, cx)
+            let list = links(page, list, "quick-access", t!("Acesso rápido"), false, &places.quick_access, first, cx);
+            // The loose files Quick access lists, folded away under a heading
+            // of their own so they do not push the folders out of view.
+            links(page, list, "quick-files", t!("Arquivos"), true, &places.files, first, cx)
         }
         // Favorite files under a heading of their own, apart from the
         // folders (issue #24).
@@ -315,7 +318,7 @@ fn render_section(
 // or card stands for it.
 fn section_is_empty(section: SidebarSection, places: &Places, look: &SidebarLook, cx: &App) -> bool {
     match section {
-        SidebarSection::QuickAccess => places.quick_access.is_empty(),
+        SidebarSection::QuickAccess => places.quick_access.is_empty() && places.files.is_empty(),
         SidebarSection::Favorites => places.favorites.is_empty(),
         SidebarSection::UserFolders => places.user_folders.is_empty(),
         SidebarSection::Drives => places.drives.is_empty() && places.devices.is_empty(),
@@ -745,6 +748,10 @@ fn render_band(
             SidebarSection::QuickAccess => {
                 let quick = place_items(page, &places.quick_access, "quick", cx);
                 sections.push((t!("Acesso rápido").to_string(), "icons/star.svg", quick, None));
+                let files = place_items(page, &places.files, "quick-files", cx);
+                if !files.is_empty() {
+                    sections.push((t!("Arquivos").to_string(), "icons/file.svg", files, None));
+                }
             }
             SidebarSection::Favorites => {
                 let favorites = place_items(page, &places.favorites, "favorite", cx);
