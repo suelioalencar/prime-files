@@ -210,8 +210,23 @@ fn render_section(
         SidebarSection::QuickAccess => {
             let list = links(page, list, "quick-access", t!("Acesso rápido"), false, &places.quick_access, first, cx);
             // The loose files Quick access lists, folded away under a heading
-            // of their own so they do not push the folders out of view.
-            links(page, list, "quick-files", t!("Arquivos"), true, &places.files, first, cx)
+            // of their own so they do not push the folders out of view. The
+            // heading folds even where the sidebar draws no headings: that is
+            // what this group is for.
+            if places.files.is_empty() {
+                return list;
+            }
+            let foldable = Draw { headers: true, ..draw };
+            let (started, heading, open) =
+                begin_group(list, "quick-files", t!("Arquivos").to_string(), true, Some(section), foldable, first, cx);
+            let mut list = started.children(heading);
+            if open {
+                for place in &places.files {
+                    let spec = RowSpec { prefix: "quick-files", depth: 0, expandable: None, menu: RowMenu::Place };
+                    list = list.child(row(page, place, spec, draw, icon_px, cx));
+                }
+            }
+            list
         }
         // Favorite files under a heading of their own, apart from the
         // folders (issue #24).
