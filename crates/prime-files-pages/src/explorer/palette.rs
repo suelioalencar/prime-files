@@ -34,6 +34,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Icon, IconName};
 use prime_files_core::{t, tf};
 use prime_files_core::telemetry::LogErr;
+use prime_files_ui::components::file_list::{format_date, get_file_type, human_bytes};
 use prime_files_ui::theme::theme;
 
 use super::media::{self as player, MediaPreview};
@@ -70,6 +71,12 @@ const FIELD: f32 = 56.0;
 const HEADING: f32 = 28.0;
 const SEARCHING: f32 = 36.0;
 const FOOTER: f32 = 34.0;
+/// The width of the column beside the list that shows the chosen file, in a
+/// host that asks for one (`PaletteHost::palette_side_preview`).
+pub(crate) const SIDE_WIDTH: f32 = 340.0;
+// The shortest the body is with that column: room for a picture and the
+// lines under it.
+const SIDE_MIN: f32 = 380.0;
 /// Room around the box in a window that is only the box: none. Such a
 /// window is opaque (its root is gpui_component's `Root`, which the text
 /// field needs and which paints the whole window), so the box fills it and
@@ -270,6 +277,15 @@ pub(crate) trait PaletteHost: Sized + 'static {
     fn palette_ctrl_enter_hint(&self) -> Option<&'static str> {
         None
     }
+    /// Whether the chosen file is shown beside the list, in a column of its
+    /// own (only in a window that is the box).
+    fn palette_side_preview(&self) -> bool {
+        false
+    }
+    /// Whether the box opens on the last search and keeps each new one.
+    fn palette_remembers(&self) -> bool {
+        false
+    }
 }
 
 // Whether a key goes to the box's preview rather than to the box: in full
@@ -325,6 +341,30 @@ fn save_zoom(zoom: f32, cx: &mut App) {
     .detach();
 }
 
+fn last_query_file() -> PathBuf {
+    prime_files_core::config::paths::data_dir().join("palette-last-query")
+}
+
+// The words last searched, for a host that opens on them.
+#[allow(clippy::disallowed_methods)]
+fn load_last_query() -> String {
+    std::fs::read_to_string(last_query_file()).map(|text| text.trim_end().to_string()).unwrap_or_default()
+}
+
+fn save_last_query(query: String, cx: &mut App) {
+    cx.background_spawn(async move {
+        let path = last_query_file();
+        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+            #[allow(clippy::disallowed_methods)]
+            std::fs::write(&path, query)
+        });
+        if let Err(error) = written {
+            tracing::warn!("could not keep the last search: {error}");
+        }
+    })
+    .detach();
+}
+
 /// The box's behaviour, the same for every host.
 pub(crate) trait PaletteBox: PaletteHost {
     fn palette_zoom(&mut self) -> f32 {
@@ -358,8 +398,11 @@ pub(crate) trait PaletteBox: PaletteHost {
         // The index loads (or is brought up to date) while the first letters
         // are typed.
         super::everything::ensure(cx);
+        let remembered = if self.palette_remembers() { load_last_query() } else { String::new() };
         let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t!("Buscar arquivos e pastas no computador ou digitar um caminho"))
+            let state = InputState::new(window, cx)
+                .placeholder(t!("Buscar arquivos e pastas no computador ou digitar um caminho"));
+            if remembered.is_empty() { state } else { state.default_value(remembered) }
         });
         input.update(cx, |state, cx| state.focus(window, cx));
         let subscription = cx.subscribe_in(&input, window, |page, _input, event: &InputEvent, window, cx| match event {
@@ -412,10 +455,14 @@ pub(crate) trait PaletteBox: PaletteHost {
     fn palette_changed(&mut self, cx: &mut Context<Self>) {
         let titles = self.palette_tabs(cx);
         let cwd = self.palette_folder(cx);
+        let remember = self.palette_remembers();
         let Some(palette) = self.palette_slot().as_mut() else {
             return;
         };
         let query = palette.input.read(cx).value().to_string();
+        if remember && query != palette.query {
+            save_last_query(query.clone(), cx);
+        }
         // Typing goes back to the list: the words are for a new search.
         if query != palette.query
             && let Some(preview) = palette.preview.take()
@@ -927,6 +974,75 @@ pub(crate) trait PaletteBox: PaletteHost {
         image.map_or(Media::None, Media::Image)
     }
 
+    // The column beside the list: the chosen file's picture as large as it
+    // fits, and what is known of it, as the explorer's preview pane shows a
+    // file. `height` is the body's.
+    fn render_side_preview(&mut self, row: Option<&Row>, height: f32, scale: f32, cx: &mut Context<Self>) -> AnyElement {
+        let column = div()
+            .w(px(SIDE_WIDTH))
+            .h(px(height))
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(10.0))
+            .p(px(16.0))
+            .border_l_1()
+            .border_color(rgb(theme::border()))
+            .overflow_hidden();
+        let Some(row) = row else {
+            return column.into_any_element();
+        };
+        let Some((path, dir)) = row.path() else {
+            return column.into_any_element();
+        };
+        let picture = SIDE_WIDTH - 32.0;
+        let media = self.palette_media(row, picture, scale, cx);
+        let (name, size, modified) = match row {
+            Row::Hit { name, size, modified, .. } => (name.clone(), (!dir).then_some(*size), Some(*modified)),
+            _ => (
+                Path::new(path).file_name().map_or_else(|| path.to_string(), |name| name.to_string_lossy().into_owned()),
+                None,
+                None,
+            ),
+        };
+        let kind = get_file_type(&name, if dir { "dir" } else { "file" });
+        let folder = Path::new(path).parent().map(|parent| parent.to_string_lossy().into_owned()).unwrap_or_default();
+        let line = |label: &'static str, value: String| {
+            div()
+                .w_full()
+                .flex()
+                .gap(px(8.0))
+                .text_xs()
+                .child(div().w(px(70.0)).flex_shrink_0().text_color(rgb(theme::muted())).child(label))
+                .child(div().flex_1().min_w(px(0.0)).text_color(rgb(theme::fg_secondary())).child(value))
+        };
+        column
+            .child(media_square(row, media, picture, false))
+            .child(
+                div()
+                    .w_full()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(rgb(theme::fg()))
+                    .text_center()
+                    .child(name),
+            )
+            .child(line(t!("Tipo"), kind))
+            .when_some(size, |this, size| this.child(line(t!("Tamanho"), human_bytes(size))))
+            .when_some(modified.filter(|modified| *modified > 0), |this, modified| {
+                this.child(line(t!("Modificado"), format_date(&modified)))
+            })
+            .child(
+                div()
+                    .w_full()
+                    .text_xs()
+                    .text_color(rgb(theme::muted()))
+                    .child(super::view::listing::truncate_middle(&folder, 44)),
+            )
+            .into_any_element()
+    }
+
     // The preview's video over the whole window (`toggle_hit_fullscreen`),
     // `width` by `height`: the picture and a bar to play, seek and come
     // back. Laid over everything; the box stays under it, holding the keys.
@@ -1352,9 +1468,13 @@ pub(crate) trait PaletteBox: PaletteHost {
             // Room for the list under the field and above the footer.
             ((width), (vw - width) / 2.0, top, (vh - top - 150.0).max(120.0))
         };
-        // The scrolled area's inner width: the card's, less its padding and
+        // With the chosen file's column beside it, the list has the width
+        // that is left.
+        let side = fills && self.palette_side_preview();
+        let list_width = if side { width - SIDE_WIDTH } else { width };
+        // The scrolled area's inner width: the list's, less its padding and
         // the scrollbar's lane.
-        let inner = width - 2.0 * 6.0 - 10.0;
+        let inner = list_width - 2.0 * 6.0 - 10.0;
         let columns = if grid { ((inner / (icon + 2.0 * TILE_PADDING)).floor() as usize).max(1) } else { 0 };
         // The tiles share the line's width, so the grid has no gap at its end.
         let tile_width = if grid { (inner / columns as f32).floor() } else { 0.0 };
@@ -1468,6 +1588,11 @@ pub(crate) trait PaletteBox: PaletteHost {
             }
             if previewing { preview_height } else { (height + 12.0).min(list_max) }
         };
+        // The body is as tall as the column needs, when there is one.
+        let show_side = side && !empty && !previewing;
+        let body_height = if show_side { list_height.max(SIDE_MIN) } else { list_height };
+        let side_element =
+            if show_side { Some(self.render_side_preview(rows.get(selected), body_height, scale, cx)) } else { None };
         let preview_element = if previewing { self.render_hit_preview(width - 2.0, preview_height, cx) } else { None };
         let fullscreen = if previewing { self.render_hit_fullscreen(vw, vh, scale, cx) } else { None };
 
@@ -1480,7 +1605,7 @@ pub(crate) trait PaletteBox: PaletteHost {
         }
         let searching = !query_empty && hit_count == 0 && !previewing;
         palette.height = FIELD
-            + if empty { 0.0 } else { 1.0 + list_height }
+            + if empty { 0.0 } else { 1.0 + body_height }
             + if searching { SEARCHING } else { 0.0 }
             + FOOTER
             + 2.0;
@@ -1625,16 +1750,23 @@ pub(crate) trait PaletteBox: PaletteHost {
             )
             .when_some(preview_element, |card, preview| card.child(div().h(px(1.0)).bg(rgb(theme::border()))).child(preview))
             .when(!empty && !previewing, |card| {
-                card.child(div().h(px(1.0)).bg(rgb(theme::border()))).child(
-                    div()
-                        .id("palette-rows")
-                        .max_h(px(list_max))
-                        .px(px(6.0))
-                        .py(px(6.0))
-                        .overflow_y_scroll()
-                        .track_scroll(&palette.scroll)
-                        .children(lines),
-                )
+                let list = div()
+                    .id("palette-rows")
+                    .max_h(px(list_max))
+                    .px(px(6.0))
+                    .py(px(6.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&palette.scroll)
+                    .children(lines);
+                card.child(div().h(px(1.0)).bg(rgb(theme::border()))).child(match side_element {
+                    Some(side) => div()
+                        .flex()
+                        .w_full()
+                        .child(div().w(px(list_width)).flex_shrink_0().child(list))
+                        .child(side)
+                        .into_any_element(),
+                    None => list.into_any_element(),
+                })
             })
             .when(searching, |card| {
                 card.child(

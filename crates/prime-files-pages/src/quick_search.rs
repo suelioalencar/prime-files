@@ -18,7 +18,9 @@ use gpui::prelude::*;
 use gpui::*;
 use prime_files_core::t;
 
-use crate::explorer::palette::{Chosen, FILL_MARGIN, FILL_MAX, Palette, PaletteBox, PaletteHost, PaletteMedia};
+use crate::explorer::palette::{
+    Chosen, FILL_MARGIN, FILL_MAX, Palette, PaletteBox, PaletteHost, PaletteMedia, SIDE_WIDTH,
+};
 
 actions!(
     quick_search,
@@ -112,7 +114,8 @@ pub fn toggle(cx: &mut App) {
         return;
     }
     let target = crate::file_dialog::foreground_file_dialog().map_or(Target::Anywhere, Target::Dialog);
-    let width = WIDTH + 2.0 * FILL_MARGIN;
+    // The list and, beside it, the column that shows the chosen file.
+    let width = WIDTH + SIDE_WIDTH + 2.0 * FILL_MARGIN;
     let height = 56.0 + 34.0 + 2.0 + 2.0 * FILL_MARGIN;
     let bounds = match cx.primary_display() {
         Some(display) => {
@@ -331,6 +334,14 @@ impl PaletteHost for QuickSearch {
     }
 
     fn palette_fills_window(&self) -> bool {
+        true
+    }
+
+    fn palette_side_preview(&self) -> bool {
+        true
+    }
+
+    fn palette_remembers(&self) -> bool {
         true
     }
 
